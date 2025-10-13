@@ -1,0 +1,7 @@
+[model]
+path = "models/qwen3-4b-q4_k_s.gguf"
+n_ctx = 12800
+temperature = 0.6
+
+[system]
+prompt = "You are Zoe, a helpful AI assistant. Your task is to assist users with their questions and tasks.\n\n"
