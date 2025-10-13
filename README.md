@@ -62,6 +62,7 @@ After cloning this repository, we must create a **virtual environment** *(option
 git clone https://github.com/sandroXP2007/zoe
 
 cd zoe/backend
+mkdir models plugins
 ./download_model
 
 python -m venv venv (recommended)
