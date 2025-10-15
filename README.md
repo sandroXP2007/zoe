@@ -28,14 +28,9 @@ Divided between the **API** and the **web dashboard** as frontend, it currently 
 - **Conversation history** support
 - **Customizable settings**
 - **Context menu** for conversation management
+- **Plugin Support** for integrations and better feature support
 
 The interface prioritizes **user privacy** by keeping all data local and **ethical AI practices** through transparent thinking processes.
-
----
-
-## Future Plans
-
-- [ ]  **Plugin Support** for integrations and better feature support
 
 ---
 
