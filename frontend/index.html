@@ -305,7 +305,7 @@
       font-weight: bold;
     }
 
-    .thinking-container {
+    .thinking-container, .tools-container {
       background: rgba(127, 90, 240, 0.1);
       border-left: 3px solid var(--accent);
       padding: 8px 12px;
@@ -313,7 +313,7 @@
       border-radius: 4px;
     }
 
-    .thinking-header {
+    .section-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -321,13 +321,13 @@
       cursor: pointer;
     }
 
-    .thinking-header span {
+    .section-header span {
       font-weight: bold;
       color: var(--accent);
       font-size: 0.9rem;
     }
 
-    .thinking-content {
+    .section-content {
       font-style: italic;
       font-size: 0.9rem;
       padding-top: 5px;
@@ -834,11 +834,11 @@ function html(text) {
             thinkContainer.className = 'thinking-container';
             
             const header = document.createElement('div');
-            header.className = 'thinking-header';
+            header.className = 'section-header';
             header.innerHTML = '<span>🧠 Thinking...</span><span>▼</span>';
             
             const thinkContentDiv = document.createElement('div');
-            thinkContentDiv.className = 'thinking-content';
+            thinkContentDiv.className = 'section-content';
             thinkContentDiv.textContent = thinkContent;
             thinkContentDiv.style.display = 'block';
             
@@ -915,23 +915,25 @@ function html(text) {
               buffer += chunk;
               
               let processedContent = buffer;
+              
               const thinkMatch = processedContent.match(/<think>([\s\S]*?)<\/think>/);
+              const toolsMatch = processedContent.match(/<tools>([\s\S]*?)<\/tools>/);
+              
+              content.innerHTML = '';
               
               if (thinkMatch) {
                 const thinkContent = thinkMatch[1].trim();
-                const mainContent = processedContent.replace(thinkMatch[0], '').trim();
-                
-                content.innerHTML = '';
+                processedContent = processedContent.replace(thinkMatch[0], '').trim();
                 
                 const thinkContainer = document.createElement('div');
                 thinkContainer.className = 'thinking-container';
                 
                 const header = document.createElement('div');
-                header.className = 'thinking-header';
+                header.className = 'section-header';
                 header.innerHTML = '<span>🧠 Thinking...</span><span>▼</span>';
                 
                 const thinkContentDiv = document.createElement('div');
-                thinkContentDiv.className = 'thinking-content';
+                thinkContentDiv.className = 'section-content';
                 thinkContentDiv.textContent = thinkContent;
                 thinkContentDiv.style.display = 'block';
                 
@@ -947,14 +949,42 @@ function html(text) {
                 };
                 
                 content.appendChild(thinkContainer);
+              }
+              
+              if (toolsMatch) {
+                const toolsContent = toolsMatch[1].trim();
+                processedContent = processedContent.replace(toolsMatch[0], '').trim();
                 
-                if (mainContent) {
-                  const mainContentDiv = document.createElement('div');
-                  mainContentDiv.innerHTML = html(mainContent);
-                  content.appendChild(mainContentDiv);
-                }
-              } else {
-                content.innerHTML = html(processedContent);
+                const toolsContainer = document.createElement('div');
+                toolsContainer.className = 'tools-container';
+                
+                const header = document.createElement('div');
+                header.className = 'section-header';
+                header.innerHTML = '<span>🛠️ Tools</span><span>▼</span>';
+                
+                const toolsContentDiv = document.createElement('div');
+                toolsContentDiv.className = 'section-content';
+                toolsContentDiv.textContent = toolsContent;
+                toolsContentDiv.style.display = 'block';
+                
+                toolsContainer.appendChild(header);
+                toolsContainer.appendChild(toolsContentDiv);
+                
+                header.onclick = (e) => {
+                  e.stopPropagation();
+                  const icon = header.querySelector('span:last-child');
+                  const isVisible = toolsContentDiv.style.display !== 'none';
+                  toolsContentDiv.style.display = isVisible ? 'none' : 'block';
+                  icon.textContent = isVisible ? '▶' : '▼';
+                };
+                
+                content.appendChild(toolsContainer);
+              }
+              
+              if (processedContent.trim()) {
+                const mainContentDiv = document.createElement('div');
+                mainContentDiv.innerHTML = html(processedContent.trim());
+                content.appendChild(mainContentDiv);
               }
               
               scroll();
