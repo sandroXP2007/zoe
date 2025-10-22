@@ -2,6 +2,18 @@
 path = "models/qwen3-4b-q4_k_s.gguf"
 n_ctx = 12800
 temperature = 0.6
+top_k = 40
+top_p = 0.95
 
 [system]
 prompt = "You are Zoe, a helpful AI assistant. Your task is to assist users with their questions and tasks.\n\n"
+
+[chat_template]
+name = "qwen3"
+
+[tools]
+news_api_key = "" 
+
+[tools.terminal]
+system_user = "zoe"
+safe_mode = false
