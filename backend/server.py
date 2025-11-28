@@ -81,22 +81,32 @@ if config and 'model' in config and 'chat_template' in config['model']:
     chat_template_name = config['model']['chat_template']
 else:
     model_filename = Path(model_path).stem.lower()
-    if 'qwen3' in model_filename:
+    if 'qwen3' in model_filename or 'qwen-3' in model_filename:
         chat_template_name = "qwen3"
+    elif 'llama-3' in model_filename or 'llama3' in model_filename:
+        chat_template_name = "llama3"
+    elif 'llama-2' in model_filename or 'llama2' in model_filename:
+        chat_template_name = "llama2"
     elif 'llama' in model_filename:
-        chat_template_name = "llama"
+        chat_template_name = "llama3"
     elif 'mistral' in model_filename:
         chat_template_name = "mistral"
     elif 'gemma' in model_filename:
         chat_template_name = "gemma"
     elif 'deepseek' in model_filename:
         chat_template_name = "deepseek"
+    elif 'phi-3' in model_filename or 'phi3' in model_filename:
+        chat_template_name = "phi3"
     elif 'phi' in model_filename:
-        chat_template_name = "phi"
-    elif 'yi' in model_filename:
-        chat_template_name = "yi"
+        chat_template_name = "phi3"
+    elif 'command-r' in model_filename or 'commandr' in model_filename:
+        chat_template_name = "command-r"
+    elif 'vicuna' in model_filename:
+        chat_template_name = "vicuna"
+    elif 'chatml' in model_filename or 'gpt' in model_filename:
+        chat_template_name = "chatml"
     else:
-        chat_template_name = "default"
+        chat_template_name = "chatml"
 
 template_str = None
 chat_templates_dir = Path("chat_templates")
@@ -110,6 +120,13 @@ if template_file.exists():
         print(f"[INFO] Loaded chat template: {chat_template_name}")
     except Exception as e:
         print(f"[ERROR] Error loading chat template {chat_template_name}: {e}")
+
+if not template_str:
+    print(f"[INFO] Using default template for {chat_template_name}")
+    if chat_template_name == "qwen3":
+        template_str = """{%- if tools %} {{- '<<|im_start|>>system\\n' }} {%- if messages and messages[0].role == 'system' %} {{- messages[0].content + '\\n\\n' }} {%- endif %} {{- '# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>' }} {%- for tool in tools %} {{- '\\n' }} {{- tool | tojson }} {%- endfor %} {{- '\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tools></tools> XML tags:\\n<tools>\\n{"name": <function-name>, "arguments": <args-json-object>}\\n</tools><|im_end|>\\n' }} {%- else %} {%- if messages and messages[0].role == 'system' %} {{- '<<|im_start|>>system\\n' + messages[0].content + '<|im_end|>\\n' }} {%- endif %} {%- endif %} {%- for message in messages %} {%- if message.role == "user" or (message.role == "system" and not loop.first) %} {{- '<<|im_start|>>' + message.role + '\\n' + message.content + '<|im_end|>\\n' }} {%- elif message.role == "assistant" %} {{- '<<|im_start|>>assistant\\n' + message.content + '<|im_end|>\\n' }} {%- elif message.role == "tool" %} {{- '<<|im_start|>>tool\\n' + message.content + '<|im_end|>\\n' }} {%- endif %} {%- endfor %} {%- if add_generation_prompt %} {{- '<<|im_start|>>assistant\\n' }} {%- if enable_thinking is defined and enable_thinking is false %} {{- '<think>\\n\\n</think>\\n\\n' }} {%- endif %} {%- endif %}"""
+    else:
+        template_str = """{%- if tools %} {{- '<|im_start|>system\\n' }} {%- if messages and messages[0].role == 'system' %} {{- messages[0].content + '\\n\\n' }} {%- endif %} {{- '# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>' }} {%- for tool in tools %} {{- '\\n' }} {{- tool | tojson }} {%- endfor %} {{- '\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tools></tools> XML tags:\\n<tools>\\n{"name": <function-name>, "arguments": <args-json-object>}\\n</tools><|im_end|>\\n' }} {%- else %} {%- if messages and messages[0].role == 'system' %} {{- '<|im_start|>system\\n' + messages[0].content + '<|im_end|>\\n' }} {%- endif %} {%- endif %} {%- for message in messages %} {%- if message.role == "user" or (message.role == "system" and not loop.first) %} {{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' }} {%- elif message.role == "assistant" %} {{- '<|im_start|>assistant\\n' + message.content + '<|im_end|>\\n' }} {%- elif message.role == "tool" %} {{- '<|im_start|>tool\\n' + message.content + '<|im_end|>\\n' }} {%- endif %} {%- endfor %} {%- if add_generation_prompt %} {{- '<|im_start|>assistant\\n' }} {%- if enable_thinking is defined and enable_thinking is false %} {{- '<think>\\n\\n</think>\\n\\n' }} {%- endif %} {%- endif %}"""
 
 if not template_str:
     print(f"[INFO] Using default template for {chat_template_name}")
