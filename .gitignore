@@ -3,3 +3,5 @@ backend/cache/responses/cache.db
 .agent/rules/no-comments.md
 backend/models/Qwen3-1.7B-UD-Q4_K_XL.gguf
 backend/models/qwen3-4b-q4_k_s.gguf
+backend/plugins
+plugins

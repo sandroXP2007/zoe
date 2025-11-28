@@ -28,11 +28,10 @@ model_speed_tracker = {"start_time": None, "tokens_count": 0}
 thinking_mode_enabled = True
 current_config = {}
 
-# Initialize cache
 cache_dir = Path("cache")
 cache_dir.mkdir(exist_ok=True)
 response_cache = Cache(str(cache_dir / "responses"))
-CACHE_TTL = 3600  # 1 hour
+CACHE_TTL = 3600  
 
 config_path = Path("config.toml")
 config = None
@@ -115,9 +114,9 @@ if template_file.exists():
 if not template_str:
     print(f"[INFO] Using default template for {chat_template_name}")
     if chat_template_name == "qwen3":
-        template_str = """{%- if tools %} {{- '<<|im_start|>>system\n' }} {%- if messages and messages[0].role == 'system' %} {{- messages[0].content + '\n\n' }} {%- endif %} {{- '# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>' }} {%- for tool in tools %} {{- '\n' }} {{- tool | tojson }} {%- endfor %} {{- '\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tools></tools> XML tags:\n<tools>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tools><|im_end|>\n' }} {%- else %} {%- if messages and messages[0].role == 'system' %} {{- '<<|im_start|>>system\n' + messages[0].content + '<|im_end|>\n' }} {%- endif %} {%- endif %} {%- for message in messages %} {%- if message.role == "user" or (message.role == "system" and not loop.first) %} {{- '<<|im_start|>>' + message.role + '\n' + message.content + '<|im_end|>\n' }} {%- elif message.role == "assistant" %} {{- '<<|im_start|>>assistant\n' + message.content + '<|im_end|>\n' }} {%- elif message.role == "tool" %} {{- '<<|im_start|>>tool\n' + message.content + '<|im_end|>\n' }} {%- endif %} {%- endfor %} {%- if add_generation_prompt %} {{- '<<|im_start|>>assistant\n' }} {%- if enable_thinking is defined and enable_thinking is false %} {{- '<think>\n\n</think>\n\n' }} {%- endif %} {%- endif %}"""
+        template_str = """{%- if tools %} {{- '<<|im_start|>>system\\n' }} {%- if messages and messages[0].role == 'system' %} {{- messages[0].content + '\\n\\n' }} {%- endif %} {{- '# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>' }} {%- for tool in tools %} {{- '\\n' }} {{- tool | tojson }} {%- endfor %} {{- '\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tools></tools> XML tags:\\n<tools>\\n{"name": <function-name>, "arguments": <args-json-object>}\\n</tools><|im_end|>\\n' }} {%- else %} {%- if messages and messages[0].role == 'system' %} {{- '<<|im_start|>>system\\n' + messages[0].content + '<|im_end|>\\n' }} {%- endif %} {%- endif %} {%- for message in messages %} {%- if message.role == "user" or (message.role == "system" and not loop.first) %} {{- '<<|im_start|>>' + message.role + '\\n' + message.content + '<|im_end|>\\n' }} {%- elif message.role == "assistant" %} {{- '<<|im_start|>>assistant\\n' + message.content + '<|im_end|>\\n' }} {%- elif message.role == "tool" %} {{- '<<|im_start|>>tool\\n' + message.content + '<|im_end|>\\n' }} {%- endif %} {%- endfor %} {%- if add_generation_prompt %} {{- '<<|im_start|>>assistant\\n' }} {%- if enable_thinking is defined and enable_thinking is false %} {{- '<think>\\n\\n</think>\\n\\n' }} {%- endif %} {%- endif %}"""
     else:
-        template_str = """{%- if tools %} {{- '<<|system|>>\n' }} {%- if messages and messages[0].role == 'system' %} {{- messages[0].content + '\n\n' }} {%- endif %} {{- '# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>' }} {%- for tool in tools %} {{- '\n' }} {{- tool | tojson }} {%- endfor %} {{- '\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tools></tools> XML tags:\n<tools>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tools>\n' }} {%- else %} {%- if messages and messages[0].role == 'system' %} {{- '<<|system|>>\n' + messages[0].content + '\n' }} {%- endif %} {%- endif %} {%- for message in messages %} {%- if message.role == "user" or (message.role == "system" and not loop.first) %} {{- '<<|user|>>\n' + message.content + '<|end|>\n' }} {%- elif message.role == "assistant" %} {{- '<<|assistant|>>\n' + message.content + '<|end|>\n' }} {%- elif message.role == "tool" %} {{- '<<|tool|>>\n' + message.content + '<|end|>\n' }} {%- endif %} {%- endfor %} {%- if add_generation_prompt %} {{- '<<|assistant|>>\n' }} {%- if enable_thinking is defined and enable_thinking is false %} {{- '<think>\n\n</think>\n\n' }} {%- endif %} {%- endif %}"""
+        template_str = """{%- if tools %} {{- '<<|system|>>\\n' }} {%- if messages and messages[0].role == 'system' %} {{- messages[0].content + '\\n\\n' }} {%- endif %} {{- '# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>' }} {%- for tool in tools %} {{- '\\n' }} {{- tool | tojson }} {%- endfor %} {{- '\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tools></tools> XML tags:\\n<tools>\\n{"name": <function-name>, "arguments": <args-json-object>}\\n</tools>\\n' }} {%- else %} {%- if messages and messages[0].role == 'system' %} {{- '<<|system|>>\\n' + messages[0].content + '\\n' }} {%- endif %} {%- endif %} {%- for message in messages %} {%- if message.role == "user" or (message.role == "system" and not loop.first) %} {{- '<<|user|>>\\n' + message.content + '<|end|>\\n' }} {%- elif message.role == "assistant" %} {{- '<<|assistant|>>\\n' + message.content + '<|end|>\\n' }} {%- elif message.role == "tool" %} {{- '<<|tool|>>\\n' + message.content + '<|end|>\\n' }} {%- endif %} {%- endfor %} {%- if add_generation_prompt %} {{- '<<|assistant|>>\\n' }} {%- if enable_thinking is defined and enable_thinking is false %} {{- '<think>\\n\\n</think>\\n\\n' }} {%- endif %} {%- endif %}""" 
 
 llm = llama_cpp.Llama(
     model_path=model_path,
@@ -230,8 +229,7 @@ class PluginManager:
         }
     
     def get_available_tools(self) -> list:
-        """Load all plugins and return all available tools"""
-        # Load all plugins when tools are requested
+        
         for plugin_name in self.plugin_files.keys():
             self._load_plugin(plugin_name)
         
@@ -251,7 +249,6 @@ class PluginManager:
         if tool_name in self.tools:
             try:
                 tool_func = self.tools[tool_name]["function"]
-                
                 
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(None, lambda: tool_func(**arguments))
@@ -289,7 +286,6 @@ env.globals['len'] = len
 
 app = FastAPI()
 
-
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -310,7 +306,6 @@ def generate_cache_key(messages: List[Dict[str, Any]], config: Dict[str, Any]) -
         "top_p": config.get("top_p", top_p),
     }, sort_keys=True)
     
-
     combined = f"{conv_str}|{config_str}"
     return hashlib.sha256(combined.encode()).hexdigest()
 
@@ -583,7 +578,6 @@ async def chat(request: Request):
             print(f"[CHAT ERROR] Error in generation: {e}")
             yield "❌ Error during generation."
     
-    
     print("[CHAT] === CHAT REQUEST COMPLETED ===")
     return StreamingResponse(generate(), media_type="text/plain")
 
@@ -622,7 +616,7 @@ async def export_conversation(request: Request):
 
 @app.post("/cache/clear")
 @limiter.limit("2/minute")
-async def clear_cache():
+async def clear_cache(request: Request):
     try:
         response_cache.clear()
         print("[CACHE] Cache cleared")
@@ -642,7 +636,6 @@ async def get_cache_stats():
     except Exception as e:
         print(f"[CACHE ERROR] Error getting cache stats: {e}")
         return {"size": 0, "ttl": CACHE_TTL}
-
 
 @app.get("/speed")
 async def get_speed():
