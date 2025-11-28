@@ -20,3 +20,5 @@ uvicorn
 urllib3
 typing_extensions
 typing-inspection
+slowapi
+aiofiles

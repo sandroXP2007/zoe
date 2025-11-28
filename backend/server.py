@@ -3,7 +3,7 @@ import toml
 from pathlib import Path
 import llama_cpp
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import jinja2
@@ -16,12 +16,23 @@ import re
 from threading import Event
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from diskcache import Cache
+import hashlib
 
 current_generation_task = None
 generation_cancel_event = Event()
 model_speed_tracker = {"start_time": None, "tokens_count": 0}
 thinking_mode_enabled = True
 current_config = {}
+
+# Initialize cache
+cache_dir = Path("cache")
+cache_dir.mkdir(exist_ok=True)
+response_cache = Cache(str(cache_dir / "responses"))
+CACHE_TTL = 3600  # 1 hour
 
 config_path = Path("config.toml")
 config = None
@@ -120,32 +131,54 @@ llm = llama_cpp.Llama(
 
 class PluginManager:
     def __init__(self):
-        self.plugins = {}
+        self.plugins = {}  
+        self.plugin_files = {}  
         self.tools = {}
-        self._load_plugins()
+        self.loaded_plugins = set()
+        self._discover_plugins()
     
-    def _load_plugins(self):
+    def _discover_plugins(self):
         plugins_dir = Path("plugins")
         plugins_dir.mkdir(exist_ok=True)
         
         for plugin_file in plugins_dir.glob("*.py"):
-            try:
-                spec = importlib.util.spec_from_file_location(
-                    plugin_file.stem, plugin_file
-                )
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+            if plugin_file.stem.startswith("_"):
+                continue
+            plugin_name = plugin_file.stem
+            self.plugin_files[plugin_name] = plugin_file
+            print(f"[PLUGIN] Discovered plugin: {plugin_name}")
+        
+        print(f"[PLUGIN] Total plugins discovered: {len(self.plugin_files)}")
+    
+    def _load_plugin(self, plugin_name: str):
+        if plugin_name in self.loaded_plugins:
+            return
+        
+        if plugin_name not in self.plugin_files:
+            print(f"[PLUGIN ERROR] Plugin not found: {plugin_name}")
+            return
+        
+        plugin_file = self.plugin_files[plugin_name]
+        try:
+            spec = importlib.util.spec_from_file_location(
+                plugin_file.stem, plugin_file
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            
+            if hasattr(module, 'PLUGIN_NAME'):
+                actual_plugin_name = getattr(module, 'PLUGIN_NAME')
+                self.plugins[actual_plugin_name] = module
+                print(f"[PLUGIN] Loaded plugin: {actual_plugin_name}")
+                self._register_plugin_tools(module, actual_plugin_name)
+                if hasattr(module, 'initialize'):
+                    module.initialize()
+                self.loaded_plugins.add(plugin_name)
+            else:
+                print(f"[PLUGIN WARNING] Plugin {plugin_name} has no PLUGIN_NAME attribute")
                 
-                if hasattr(module, 'PLUGIN_NAME'):
-                    plugin_name = getattr(module, 'PLUGIN_NAME')
-                    self.plugins[plugin_name] = module
-                    print(f"[PLUGIN] Loaded plugin: {plugin_name}")
-                    self._register_plugin_tools(module, plugin_name)
-                    if hasattr(module, 'initialize'):
-                        module.initialize()
-                        
-            except Exception as e:
-                print(f"[PLUGIN ERROR] Error loading plugin {plugin_file.name}: {e}")
+        except Exception as e:
+            print(f"[PLUGIN ERROR] Error loading plugin {plugin_file.name}: {e}")
     
     def _register_plugin_tools(self, module, plugin_name: str):
         for name, func in inspect.getmembers(module, inspect.isfunction):
@@ -154,7 +187,8 @@ class PluginManager:
                 full_tool_name = f"{plugin_name}_{name}"
                 self.tools[full_tool_name] = {
                     "function": func,
-                    "spec": tool_spec
+                    "spec": tool_spec,
+                    "plugin_name": plugin_name
                 }
                 print(f"[PLUGIN] Registered tool: {full_tool_name}")
     
@@ -196,17 +230,32 @@ class PluginManager:
         }
     
     def get_available_tools(self) -> list:
+        """Load all plugins and return all available tools"""
+        # Load all plugins when tools are requested
+        for plugin_name in self.plugin_files.keys():
+            self._load_plugin(plugin_name)
+        
         tools_list = [tool["spec"] for tool in self.tools.values()]
         print(f"[PLUGIN] Available tools: {[t['name'] for t in tools_list]}")
         return tools_list
     
-    def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[PLUGIN] Executing tool: {tool_name} with args: {arguments}")
+        
+        if tool_name not in self.tools:
+            
+            plugin_name = tool_name.split('_')[0] if '_' in tool_name else tool_name
+            if plugin_name in self.plugin_files:
+                self._load_plugin(plugin_name)
         
         if tool_name in self.tools:
             try:
                 tool_func = self.tools[tool_name]["function"]
-                result = tool_func(**arguments)
+                
+                
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, lambda: tool_func(**arguments))
+                
                 print(f"[PLUGIN] Tool {tool_name} executed successfully")
                 return {
                     "success": True,
@@ -240,6 +289,11 @@ env.globals['len'] = len
 
 app = FastAPI()
 
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -248,8 +302,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def generate_cache_key(messages: List[Dict[str, Any]], config: Dict[str, Any]) -> str:
+    conv_str = json.dumps(messages, sort_keys=True)
+    config_str = json.dumps({
+        "temperature": config.get("temperature", temperature),
+        "top_k": config.get("top_k", top_k),
+        "top_p": config.get("top_p", top_p),
+    }, sort_keys=True)
+    
+
+    combined = f"{conv_str}|{config_str}"
+    return hashlib.sha256(combined.encode()).hexdigest()
+
+def get_cached_response(cache_key: str) -> Optional[str]:
+    try:
+        cached = response_cache.get(cache_key)
+        if cached:
+            print(f"[CACHE] Cache hit for key: {cache_key[:16]}...")
+            return cached
+        print(f"[CACHE] Cache miss for key: {cache_key[:16]}...")
+        return None
+    except Exception as e:
+        print(f"[CACHE ERROR] Error retrieving from cache: {e}")
+        return None
+
+def set_cached_response(cache_key: str, response: str):
+    try:
+        response_cache.set(cache_key, response, expire=CACHE_TTL)
+        print(f"[CACHE] Cached response for key: {cache_key[:16]}...")
+    except Exception as e:
+        print(f"[CACHE ERROR] Error storing in cache: {e}")
+
 def extract_tool_calls_from_text(text: str) -> List[Dict[str, Any]]:
-    """Extrai chamadas de ferramentas do texto gerado"""
     print(f"[TOOLS] Extracting tool calls from text")
     tool_calls = []
     
@@ -279,33 +363,53 @@ def extract_tool_calls_from_text(text: str) -> List[Dict[str, Any]]:
     print(f"[TOOLS] Found {len(tool_calls)} tool calls")
     return tool_calls
 
-def execute_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Executa chamadas de ferramentas e retorna resultados"""
-    print(f"[TOOLS] Executing {len(tool_calls)} tool calls")
-    results = []
+async def execute_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    print(f"[TOOLS] Executing {len(tool_calls)} tool calls in parallel")
     
-    for tool_call in tool_calls:
+    async def execute_single_tool(tool_call):
         try:
             tool_name = tool_call.get("name")
             arguments = tool_call.get("arguments", {})
             
             print(f"[TOOLS] Executing tool: {tool_name}")
-            result = plugin_manager.execute_tool(tool_name, arguments)
-            results.append(result)
+            result = await plugin_manager.execute_tool(tool_name, arguments)
             print(f"[TOOLS] Tool {tool_name} executed successfully")
+            return result
         except Exception as e:
             print(f"[TOOLS ERROR] Error executing tool call: {e}")
-            error_result = {
+            return {
                 "success": False,
                 "tool_name": tool_call.get("name", "unknown"),
                 "error": str(e)
             }
-            results.append(error_result)
     
-    return results
+    try:
+        results = await asyncio.gather(
+            *[execute_single_tool(tc) for tc in tool_calls],
+            return_exceptions=True
+        )
+        
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                processed_results.append({
+                    "success": False,
+                    "tool_name": tool_calls[i].get("name", "unknown"),
+                    "error": str(result)
+                })
+            else:
+                processed_results.append(result)
+        
+        return processed_results
+    except Exception as e:
+        print(f"[TOOLS ERROR] Error in parallel execution: {e}")
+        return [{
+            "success": False,
+            "tool_name": "parallel_execution",
+            "error": str(e)
+        }]
 
 def add_tool_results_to_messages(messages: List[Dict[str, Any]], tool_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Adiciona resultados de ferramentas às mensagens"""
     print(f"[TOOLS] Adding {len(tool_results)} tool results to messages")
     updated_messages = messages.copy()
     
@@ -331,6 +435,7 @@ class ChatRequest(BaseModel):
     enable_thinking: bool = True
 
 @app.post("/chat")
+@limiter.limit("10/minute")
 async def chat(request: Request):
     global current_generation_task, generation_cancel_event, model_speed_tracker
     
@@ -351,6 +456,21 @@ async def chat(request: Request):
     tools = validated_data.tools
     add_generation_prompt = validated_data.add_generation_prompt
     enable_thinking = validated_data.enable_thinking
+    
+    cache_key = None
+    if not tools or len(tools) == 0:
+        cache_config = {
+            "temperature": temperature,
+            "top_k": top_k,
+            "top_p": top_p
+        }
+        cache_key = generate_cache_key(messages, cache_config)
+        cached_response = get_cached_response(cache_key)
+        
+        if cached_response:
+            async def cached_stream():
+                yield cached_response
+            return StreamingResponse(cached_stream(), media_type="text/plain")
     
     if not messages or messages[0].get('role') != 'system':
         messages = [{'role': 'system', 'content': system_prompt}] + messages
@@ -388,9 +508,9 @@ async def chat(request: Request):
         top_p=top_p
     )
     
-    def generate():
+    async def generate():
         global current_generation_task, generation_cancel_event, model_speed_tracker
-        nonlocal messages
+        nonlocal messages, cache_key
         
         try:
             full_response = ""
@@ -409,8 +529,8 @@ async def chat(request: Request):
             tool_calls = extract_tool_calls_from_text(full_response)
             
             if tool_calls:
-                print(f"[CHAT] Found {len(tool_calls)} tool calls, executing...")
-                tool_results = execute_tool_calls(tool_calls)
+                print(f"[CHAT] Found {len(tool_calls)} tool calls, executing in parallel...")
+                tool_results = await execute_tool_calls(tool_calls)
                 
                 messages_with_results = add_tool_results_to_messages(messages + [{"role": "assistant", "content": full_response}], tool_results)
                 
@@ -441,19 +561,28 @@ async def chat(request: Request):
                     top_p=top_p
                 )
                 
+                final_response = ""
                 for chunk in new_output:
                     if generation_cancel_event.is_set():
                         print("[CHAT] Final generation cancelled")
                         break
                     
                     text = chunk["choices"][0]["text"]
+                    final_response += text
                     model_speed_tracker["tokens_count"] += len(text.split())
                     print(f"[CHAT] Yielding final text: {text[:50]}...")
                     yield text
+                
+                if cache_key and final_response:
+                    set_cached_response(cache_key, final_response)
+            else:
+                if cache_key and full_response:
+                    set_cached_response(cache_key, full_response)
             
         except Exception as e:
             print(f"[CHAT ERROR] Error in generation: {e}")
             yield "❌ Error during generation."
+    
     
     print("[CHAT] === CHAT REQUEST COMPLETED ===")
     return StreamingResponse(generate(), media_type="text/plain")
@@ -464,6 +593,56 @@ async def cancel_generation():
     generation_cancel_event.set()
     print("[CANCEL] Generation cancelled")
     return {"message": "Generation cancelled"}
+
+class ExportRequest(BaseModel):
+    messages: List[Message]
+    title: Optional[str] = "Conversation"
+
+@app.post("/export")
+@limiter.limit("5/minute")
+async def export_conversation(request: Request):
+    data = await request.json()
+    validated_data = ExportRequest(**data)
+    
+    export_data = {
+        "title": validated_data.title,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "model": {
+            "path": model_path,
+            "n_ctx": n_ctx,
+            "temperature": temperature,
+            "top_k": top_k,
+            "top_p": top_p
+        },
+        "messages": [m.dict() for m in validated_data.messages],
+        "message_count": len(validated_data.messages)
+    }
+    
+    return JSONResponse(content=export_data)
+
+@app.post("/cache/clear")
+@limiter.limit("2/minute")
+async def clear_cache():
+    try:
+        response_cache.clear()
+        print("[CACHE] Cache cleared")
+        return {"message": "Cache cleared successfully"}
+    except Exception as e:
+        print(f"[CACHE ERROR] Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
+
+@app.get("/cache/stats")
+async def get_cache_stats():
+    try:
+        stats = {
+            "size": len(response_cache),
+            "ttl": CACHE_TTL
+        }
+        return stats
+    except Exception as e:
+        print(f"[CACHE ERROR] Error getting cache stats: {e}")
+        return {"size": 0, "ttl": CACHE_TTL}
+
 
 @app.get("/speed")
 async def get_speed():
